@@ -34,7 +34,7 @@ Resources:
       CidrBlock: 10.0.0.0/16
       EnableDnsSupport: true
       EnableDnsHostnames: true
-
+  
   rInternetGateway:
     Type: AWS::EC2::InternetGateway
     DependsOn: rVPC
@@ -45,12 +45,156 @@ Resources:
       VpcId: !Ref rVPC
       InternetGatewayId: !Ref rInternetGateway
   
-  rPublicSubnet:
+  rPublicSubnetA: # a subnet that is accessbile from the Internet
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref rVPC
       CidrBlock: 10.0.1.0/24
       AvailabilityZone: !Select [ 0, !GetAZs ]
+  
+  rPublicSubnetB: # a subnet that is accessbile from the Internet
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref rVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [ 1, !GetAZs ]
+
+  rPublicRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref rVPC
+
+  rPublicRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref rVPC
+
+  rPublicRouteA:
+    Type: AWS::EC2::Route
+    DependsOn: rGatewayAttachment
+    Properties:
+      RouteTableId: !Ref rPublicRouteTableA
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref rInternetGateway
+  
+  rPublicRouteB:
+    Type: AWS::EC2::Route
+    DependsOn: rGatewayAttachment
+    Properties:
+      RouteTableId: !Ref rPublicRouteTableB
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref rInternetGateway
+  
+  rPublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref rPublicSubnetA
+      RouteTableId: !Ref rPublicRouteTableA
+
+  rPublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref rPublicSubnetB
+      RouteTableId: !Ref rPublicRouteTableB
+  
+  rEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Port 80 Inbound'
+      VpcId:
+        Ref: rVPC
+      SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 80
+            ToPort: 80
+            SourceSecurityGroupId:
+              Ref: rELBSecurityGroup
+
+  rELBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Port 80 Inbound'
+      VpcId:
+        Ref: rVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+  
+  # Load Balancer
+  rALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn:
+            Ref: rEC2TargetGroup
+      LoadBalancerArn:
+        Ref: rApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  rApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+      - Ref: rPublicSubnetA
+      - Ref: rPublicSubnetB
+      SecurityGroups:
+      - Ref: rELBSecurityGroup
+  
+  rEC2TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 15
+      HealthyThresholdCount: 5
+      Matcher:
+        HttpCode: '200'
+      Name: EC2TargetGroup
+      Port: 80
+      Protocol: HTTP
+      TargetGroupAttributes:
+      - Key: load_balancing.algorithm.type
+        Value: 'round_robin'
+      Targets:
+      - Id:
+          Ref: rAppServerOne
+        Port: 80
+      UnhealthyThresholdCount: 3
+      VpcId:
+        Ref: rVPC
+
+  # Linux Instance with Apache running on Port 80
+  rAppServerOne:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-1ec8d37a
+      InstanceInitiatedShutdownBehavior: terminate
+      InstanceType: t2.nano
+      NetworkInterfaces:
+      - AssociatePublicIpAddress: true
+        DeviceIndex: '0'
+        GroupSet:
+        - !Ref rEC2SecurityGroup
+        SubnetId:
+          Ref: rPublicSubnetA
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          cd /tmp
+          yum update -y
+          yum install -y httpd24
+          echo "Healthy" > /var/www/html/index.html
+          service httpd start
+          /opt/aws/bin/cfn-signal \
+            -e $? \
+            --stack ${AWS::StackName} \
+            --resource AmazonLinuxInstance \
+            --region ${AWS::Region}
 
   rCodeBuildRole:
     Type: AWS::IAM::Role
