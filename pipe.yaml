@@ -28,6 +28,29 @@ Parameters:
       - aws/codebuild/windows-base:1.0
 
 Resources:
+  rVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  rInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: rVPC
+
+  rGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref rVPC
+      InternetGatewayId: !Ref rInternetGateway
+  
+  rPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref rVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs ]
 
   rCodeBuildRole:
     Type: AWS::IAM::Role
@@ -78,7 +101,6 @@ Resources:
       AuthType: PERSONAL_ACCESS_TOKEN
       ServerType: GITHUB
       Token: !Sub '{{resolve:secretsmanager:${pGitHubOAuthTokenSecretArn}:SecretString:GITHUB_ACCESS_TOKEN}}'
-
     
   rCfnDeploymentProject:
     Type: AWS::CodeBuild::Project
