@@ -1,0 +1,109 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: AWS CodePipeline for buildIT Wilpro exercise. Deploys a CodePipeline and CloudFormation Stacks.
+
+Parameters:
+
+  pGitHubUrl:
+    Type: String
+    Default: https://github.com/alexsunins/devops-test.git
+    Description: The GitHub repository linked to a webhook
+  
+  pGitHubOAuthTokenSecretArn:
+    Description: The name of a Secret that is holding GitHub OAuth token
+    Type: String
+    Default: '/wilpro/GithubTokenSecretArn'
+  
+  pCfnBuildImage:
+    Type: String
+    Default: aws/codebuild/standard:2.0
+    Description: The CloudFormation build environment image.
+    AllowedValues:
+      - aws/codebuild/standard:2.0
+      - aws/codebuild/standard:2.0-1.12.0
+      - aws/codebuild/standard:2.0-1.11.0
+      - aws/codebuild/standard:2.0-1.10.0
+      - aws/codebuild/standard:2.0-1.9.0
+      - aws/codebuild/standard:1.0
+      - aws/codebuild/windows-base:1.0
+
+Resources:
+
+  rCodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+      Policies:
+        - PolicyName: CodeBuildServiceRolePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: CloudWatchWriteLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:PutSubscriptionFilter
+                Resource: '*'
+              - Sid: S3ListBucket
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - '*'
+              - Sid: S3ListGetPutObjects
+                Effect: Allow
+                Action:
+                  - s3:ListObjects
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                Resource:
+                  - '*'
+
+  rGitHubAuthTokenSecret:
+    Type: AWS::CodeBuild::SourceCredential
+    Properties:
+      AuthType: PERSONAL_ACCESS_TOKEN
+      ServerType: GITHUB
+      Token: !Sub '{{resolve:secretsmanager:${pGitHubOAuthTokenSecretArn}:SecretString:GITHUB_ACCESS_TOKEN}}'
+
+    
+  rCfnDeploymentProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: wilpro-cfn-project
+      ServiceRole: !GetAtt rCodeBuildRole.Arn
+      Source:
+        Type: GITHUB
+        Location: !Ref pGitHubUrl
+        BuildSpec: buildspec-cfn.yml
+        Auth:
+          Type: OAUTH
+          Resource: !Ref rGitHubAuthTokenSecret
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: !Ref pCfnBuildImage
+        Type: LINUX_CONTAINER
+      Triggers: 
+        Webhook: true
+        FilterGroups:
+          - - Type: EVENT
+              Pattern: PULL_REQUEST_CREATED,PULL_REQUEST_UPDATED
+            - Type: BASE_REF
+              Pattern: !Sub ^refs/heads/master$
+              ExcludeMatchedPattern: false
+      TimeoutInMinutes: 5
