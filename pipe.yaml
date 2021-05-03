@@ -193,7 +193,35 @@ Resources:
           /opt/aws/bin/cfn-signal \
             -e $? \
             --stack ${AWS::StackName} \
-            --resource AmazonLinuxInstance \
+            --resource rAppServerOne \
+            --region ${AWS::Region}
+  
+  # Linux Instance with Apache running on Port 80
+  rAppServerTwo:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-1ec8d37a
+      InstanceInitiatedShutdownBehavior: terminate
+      InstanceType: t2.nano
+      NetworkInterfaces:
+      - AssociatePublicIpAddress: true
+        DeviceIndex: '0'
+        GroupSet:
+        - !Ref rEC2SecurityGroup
+        SubnetId:
+          Ref: rPublicSubnetB
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          cd /tmp
+          yum update -y
+          yum install -y httpd24
+          echo "Healthy" > /var/www/html/index.html
+          service httpd start
+          /opt/aws/bin/cfn-signal \
+            -e $? \
+            --stack ${AWS::StackName} \
+            --resource rAppServerTwo \
             --region ${AWS::Region}
 
   rCodeBuildRole:
@@ -273,3 +301,21 @@ Resources:
               Pattern: !Sub ^refs/heads/master$
               ExcludeMatchedPattern: false
       TimeoutInMinutes: 5
+
+Outputs:
+    rALBDNS:
+        Description: "Application Load Balancer Hostname"
+        Value:
+          !GetAtt rApplicationLoadBalancer.DNSName
+    AppServerOne:
+        Description: "App Server One"
+        Value:
+          Ref: rAppServerOne
+    AppServerTwo:
+        Description: "App Server Two"
+        Value:
+          Ref: rAppServerTwo
+    ApplicationLoadBalancer:
+        Description: "Application Load Balancer"
+        Value:
+          Ref: rApplicationLoadBalancer
