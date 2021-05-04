@@ -487,9 +487,6 @@ Resources:
               commands:
                 - npm install
                 - npm install -g mocha
-            pre_build:
-              commands:
-                - npm run lint
             build:
               commands:
                 - npm test
@@ -497,7 +494,7 @@ Resources:
       Environment:
         Type: LINUX_CONTAINER
         ComputeType: BUILD_GENERAL1_LARGE
-        Image: aws/codebuild/nodejs:6.3.1
+        Image: aws/codebuild/eb-nodejs-6.10.0-amazonlinux-64:4.0.0-1.0.0
   
   rCodeBuildProject:
     Type: AWS::CodeBuild::Project
