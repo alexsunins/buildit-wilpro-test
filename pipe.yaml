@@ -351,7 +351,6 @@ Resources:
       Name: !Sub "${pGitHubRepoName}-${pGitHubBranch}-pipeline"
       ArtifactStore:
         Type: S3
-        # Location: !Ref pS3ArtifactStore
         Location: !Ref rBuildArtifactS3Bucket
       RoleArn: !GetAtt rCodePipelineRole.Arn
       Stages:
@@ -399,7 +398,7 @@ Resources:
               OutputArtifacts:
                 - Name: !Sub "${pGitHubRepoName}-${pGitHubBranch}-build-output"
               Configuration:
-                ProjectName: !Sub "${pGitHubRepoName}-${pGitHubBranch}-project"
+                ProjectName: !Sub "${pGitHubRepoName}-${pGitHubBranch}"
               RunOrder: 1
         - Name: Deploy
           Actions:
