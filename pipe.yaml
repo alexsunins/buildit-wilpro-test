@@ -184,61 +184,6 @@ Resources:
       VpcId:
         Ref: rVPC
 
-  # Linux Instances with Apache running on Port 80
-  rAppServerOne:
-    Type: AWS::EC2::Instance
-    Properties:
-      ImageId: ami-1ec8d37a
-      InstanceInitiatedShutdownBehavior: terminate
-      InstanceType: t2.nano
-      NetworkInterfaces:
-      - AssociatePublicIpAddress: true
-        DeviceIndex: '0'
-        GroupSet:
-        - !Ref rEC2SecurityGroup
-        SubnetId:
-          Ref: rPublicSubnetA
-      UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash -xe
-          cd /tmp
-          yum update -y
-          yum install -y httpd24
-          echo "Healthy" > /var/www/html/index.html
-          service httpd start
-          /opt/aws/bin/cfn-signal \
-            -e $? \
-            --stack ${AWS::StackName} \
-            --resource rAppServerOne \
-            --region ${AWS::Region}
-            
-  rAppServerTwo:
-    Type: AWS::EC2::Instance
-    Properties:
-      ImageId: ami-1ec8d37a
-      InstanceInitiatedShutdownBehavior: terminate
-      InstanceType: t2.nano
-      NetworkInterfaces:
-      - AssociatePublicIpAddress: true
-        DeviceIndex: '0'
-        GroupSet:
-        - !Ref rEC2SecurityGroup
-        SubnetId:
-          Ref: rPublicSubnetB
-      UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash -xe
-          cd /tmp
-          yum update -y
-          yum install -y httpd24
-          echo "Healthy" > /var/www/html/index.html
-          service httpd start
-          /opt/aws/bin/cfn-signal \
-            -e $? \
-            --stack ${AWS::StackName} \
-            --resource rAppServerTwo \
-            --region ${AWS::Region}
-
   # code pipeline
   rBuildArtifactS3Bucket:
     Type: AWS::S3::Bucket
@@ -550,49 +495,97 @@ Resources:
               - ec2:Describe*
       Roles:
         - !Ref rCodeDeployRole
+  
+  # ec2 instances for code deploy
+  rEC2InstanceRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        -
+          PolicyName: EC2DeployPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - "s3:Get*"
+                  - "s3:List*"
+                Resource: "*"
 
-  # rCodeBuildRole:
-  #   Type: AWS::IAM::Role
-  #   Properties:
-  #     AssumeRolePolicyDocument:
-  #       Version: '2012-10-17'
-  #       Statement:
-  #         - Effect: Allow
-  #           Action:
-  #             - sts:AssumeRole
-  #           Principal:
-  #             Service:
-  #               - codebuild.amazonaws.com
-  #     Policies:
-  #       - PolicyName: CodeBuildServiceRolePolicy
-  #         PolicyDocument:
-  #           Version: '2012-10-17'
-  #           Statement:
-  #             - Sid: CloudWatchWriteLogs
-  #               Effect: Allow
-  #               Action:
-  #                 - logs:CreateLogGroup
-  #                 - logs:CreateLogStream
-  #                 - logs:PutLogEvents
-  #                 - logs:PutSubscriptionFilter
-  #               Resource: '*'
-  #             - Sid: S3ListBucket
-  #               Effect: Allow
-  #               Action:
-  #                 - s3:ListBucket
-  #               Resource:
-  #                 - '*'
-  #             - Sid: S3ListGetPutObjects
-  #               Effect: Allow
-  #               Action:
-  #                 - s3:ListObjects
-  #                 - s3:GetObject
-  #                 - s3:GetObjectVersion
-  #                 - s3:GetBucketVersioning
-  #                 - s3:PutObject
-  #                 - s3:PutObjectAcl
-  #               Resource:
-  #                 - '*'
+  rEC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref rEC2InstanceRole
+  
+  rInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Open ports 22 and 80
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+
+  rEC2LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${pGitHubRepoName}-LaunchTemplate"
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Arn: !GetAtt
+            - rEC2InstanceProfile
+            - Arn
+        ImageId: ami-1ec8d37a
+        InstanceType: t2.nano
+        # KeyName: MyKeyPair
+        SecurityGroupIds:
+          - !GetAtt rInstanceSecurityGroup.GroupId
+        UserData:
+          Fn::Base64: |
+              #!/bin/bash -xe
+              yum -y update
+              yum install -y ruby
+              yum install -y aws-cli
+              curl --silent --location https://rpm.nodesource.com/setup_6.x | sudo bash -
+              sudo yum -y install nodejs
+              cd /var
+              mkdir nodeapp
+              cd /home/ec2-user
+              wget https://aws-codedeploy-eu-west-2.s3.amazonaws.com/latest/install
+              chmod +x ./install
+              ./install auto
+
+  rAppServerOne:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref rEC2LaunchTemplate
+        Version: "1"
+  
+  rAppServerTwo:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref rEC2LaunchTemplate
+        Version: "1"
 
   rGitHubAuthTokenSecret:
     Type: AWS::CodeBuild::SourceCredential
@@ -600,34 +593,6 @@ Resources:
       AuthType: PERSONAL_ACCESS_TOKEN
       ServerType: GITHUB
       Token: !Sub '{{resolve:secretsmanager:${pGitHubOAuthTokenSecretArn}:SecretString:GITHUB_ACCESS_TOKEN}}'
-    
-  # rCfnDeploymentProject:
-  #   Type: AWS::CodeBuild::Project
-  #   Properties:
-  #     Name: wilpro-cfn-project
-  #     ServiceRole: !GetAtt rCodeBuildRole.Arn
-  #     Source:
-  #       Type: GITHUB
-  #       Location: !Ref pGitHubUrl
-  #       BuildSpec: buildspec-cfn.yml
-  #       Auth:
-  #         Type: OAUTH
-  #         Resource: !Ref rGitHubAuthTokenSecret
-  #     Artifacts:
-  #       Type: NO_ARTIFACTS
-  #     Environment:
-  #       ComputeType: BUILD_GENERAL1_SMALL
-  #       Image: !Ref pCfnBuildImage
-  #       Type: LINUX_CONTAINER
-  #     Triggers: 
-  #       Webhook: true
-  #       FilterGroups:
-  #         - - Type: EVENT
-  #             Pattern: PULL_REQUEST_CREATED,PULL_REQUEST_UPDATED
-  #           - Type: BASE_REF
-  #             Pattern: !Sub ^refs/heads/master$
-  #             ExcludeMatchedPattern: false
-  #     TimeoutInMinutes: 5
 
 Outputs:
     rALBDNS:
