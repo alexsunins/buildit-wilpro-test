@@ -291,6 +291,7 @@ Resources:
                 Resource: "*"
 
   rCodePipeline:
+    DependsOn: rAppServerTwo
     Type: AWS::CodePipeline::Pipeline
     Properties:
       Name: !Sub "${pGitHubRepoName}-${pGitHubBranch}-pipeline"
@@ -356,8 +357,8 @@ Resources:
                 Version: "1"
                 Provider: CodeDeploy
               Configuration:
-                ApplicationName: !Sub "${pGitHubRepoName}-${pGitHubBranch}"
-                DeploymentGroupName: !Sub "${pGitHubRepoName}-${pGitHubBranch}"
+                ApplicationName: !Sub "${pGitHubRepoName}-application"
+                DeploymentGroupName: !Sub "${pGitHubRepoName}-application"
               RunOrder: 1
   
   # code build
@@ -409,7 +410,8 @@ Resources:
                   - s3:PutObject
                   - s3:PutObjectAcl
                 Resource:
-                  - !Sub 'arn:aws:s3:::${pGitHubRepoName}-${pGitHubBranch}-pipeline/*'                  
+                  - !Sub 'arn:aws:s3:::${pGitHubRepoName}-${pGitHubBranch}-pipeline/*'
+                  
   
   rTestCodeBuildProject:
     Type: AWS::CodeBuild::Project
@@ -455,7 +457,7 @@ Resources:
       Source:
         Type: CODEPIPELINE
       TimeoutInMinutes: 10
-  
+
   # code deploy
   rDeployApplication:
     Type: "AWS::CodeDeploy::Application"
@@ -468,6 +470,10 @@ Resources:
       ApplicationName: !Ref rDeployApplication
       DeploymentConfigName: CodeDeployDefault.AllAtOnce
       DeploymentGroupName: !Sub "${pGitHubRepoName}-application"
+      Ec2TagFilters:
+        - Key: name
+          Value: !Sub "${pGitHubRepoName}-application"
+          Type: KEY_AND_VALUE
       ServiceRoleArn: !GetAtt rCodeDeployRole.Arn
 
   rCodeDeployRole:
@@ -543,7 +549,7 @@ Resources:
         FromPort: 80
         ToPort: 80
         CidrIp: 0.0.0.0/0
-
+  
   rEC2LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
@@ -558,6 +564,11 @@ Resources:
         # KeyName: MyKeyPair
         SecurityGroupIds:
           - !GetAtt rInstanceSecurityGroup.GroupId
+        TagSpecifications:
+          - ResourceType: instance
+            Tags: 
+              - Key: name
+                Value: !Sub "${pGitHubRepoName}-application"              
         UserData:
           Fn::Base64: |
               #!/bin/bash -xe
@@ -581,6 +592,7 @@ Resources:
         Version: "1"
   
   rAppServerTwo:
+    DependsOn: rAppServerOne
     Type: 'AWS::EC2::Instance'
     Properties:
       LaunchTemplate:
