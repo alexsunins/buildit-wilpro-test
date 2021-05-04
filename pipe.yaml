@@ -3,6 +3,20 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: AWS CodePipeline for buildIT Wilpro exercise. Deploys a CodePipeline and CloudFormation Stacks.
 
 Parameters:
+  pGitHubRepoOwner:
+    Type: String
+    Description: Owner of the GitHub Repository
+    Default: alexsunins
+
+  pGitHubRepoName:
+    Type: String
+    Description: Name of the GitHub Repository
+    Default: devops-test
+
+  pGitHubBranch:
+    Type: String
+    Description: Name of branch to use inside the GitHub Repository
+    Default: master
 
   pGitHubUrl:
     Type: String
@@ -28,6 +42,7 @@ Parameters:
       - aws/codebuild/windows-base:1.0
 
 Resources:
+  # network components
   rVPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -97,19 +112,8 @@ Resources:
       SubnetId: !Ref rPublicSubnetB
       RouteTableId: !Ref rPublicRouteTableB
   
-  rEC2SecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: 'Port 80 Inbound'
-      VpcId:
-        Ref: rVPC
-      SecurityGroupIngress:
-          - IpProtocol: tcp
-            FromPort: 80
-            ToPort: 80
-            SourceSecurityGroupId:
-              Ref: rELBSecurityGroup
-
+  # load balancer
+  
   rELBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -122,7 +126,19 @@ Resources:
           ToPort: 80
           CidrIp: 0.0.0.0/0
   
-  # Load Balancer
+  rEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Port 80 Inbound'
+      VpcId:
+        Ref: rVPC
+      SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 80
+            ToPort: 80
+            SourceSecurityGroupId:
+              Ref: rELBSecurityGroup  
+  
   rALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -168,7 +184,7 @@ Resources:
       VpcId:
         Ref: rVPC
 
-  # Linux Instance with Apache running on Port 80
+  # Linux Instances with Apache running on Port 80
   rAppServerOne:
     Type: AWS::EC2::Instance
     Properties:
@@ -195,8 +211,7 @@ Resources:
             --stack ${AWS::StackName} \
             --resource rAppServerOne \
             --region ${AWS::Region}
-  
-  # Linux Instance with Apache running on Port 80
+            
   rAppServerTwo:
     Type: AWS::EC2::Instance
     Properties:
@@ -223,6 +238,183 @@ Resources:
             --stack ${AWS::StackName} \
             --resource rAppServerTwo \
             --region ${AWS::Region}
+
+  # code pipeline
+  rBuildArtifactS3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub ${pGitHubRepoName}-${pGitHubBranch}-pipeline
+
+  rCodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - "codepipeline.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        - PolicyName: CodePipelinePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:GetObject"
+                  - "s3:GetObjectVersion"
+                  - "s3:GetBucketVersioning"
+                  - "s3:List*"
+                Resource:
+                  - !Sub 'arn:aws:s3:::${pGitHubRepoName}-${pGitHubBranch}-pipeline'
+              - Effect: Allow
+                Action:
+                  - "s3:PutObject"
+                Resource:
+                  - "arn:aws:s3:::codepipeline*"
+                  - "arn:aws:s3:::elasticbeanstalk*"
+              - Effect: Allow
+                Action:
+                  - "codecommit:CancelUploadArchive"
+                  - "codecommit:GetBranch"
+                  - "codecommit:GetCommit"
+                  - "codecommit:GetUploadArchiveStatus"
+                  - "codecommit:UploadArchive"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "codedeploy:CreateDeployment"
+                  - "codedeploy:GetApplicationRevision"
+                  - "codedeploy:GetDeployment"
+                  - "codedeploy:GetDeploymentConfig"
+                  - "codedeploy:RegisterApplicationRevision"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "elasticbeanstalk:*"
+                  - "ec2:*"
+                  - "elasticloadbalancing:*"
+                  - "autoscaling:*"
+                  - "cloudwatch:*"
+                  - "s3:*"
+                  - "sns:*"
+                  - "cloudformation:*"
+                  - "rds:*"
+                  - "sqs:*"
+                  - "ecs:*"
+                  - "iam:PassRole"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "lambda:InvokeFunction"
+                  - "lambda:ListFunctions"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "opsworks:CreateDeployment"
+                  - "opsworks:DescribeApps"
+                  - "opsworks:DescribeCommands"
+                  - "opsworks:DescribeDeployments"
+                  - "opsworks:DescribeInstances"
+                  - "opsworks:DescribeStacks"
+                  - "opsworks:UpdateApp"
+                  - "opsworks:UpdateStack"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "cloudformation:CreateStack"
+                  - "cloudformation:DeleteStack"
+                  - "cloudformation:DescribeStacks"
+                  - "cloudformation:UpdateStack"
+                  - "cloudformation:CreateChangeSet"
+                  - "cloudformation:DeleteChangeSet"
+                  - "cloudformation:DescribeChangeSet"
+                  - "cloudformation:ExecuteChangeSet"
+                  - "cloudformation:SetStackPolicy"
+                  - "cloudformation:ValidateTemplate"
+                  - "iam:PassRole"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "codebuild:BatchGetBuilds"
+                  - "codebuild:StartBuild"
+                Resource: "*"
+
+  rCodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "${pGitHubRepoName}-${pGitHubBranch}-pipeline"
+      ArtifactStore:
+        Type: S3
+        # Location: !Ref pS3ArtifactStore
+        Location: !Ref rBuildArtifactS3Bucket
+      RoleArn: !GetAtt rCodePipelineRole.Arn
+      Stages:
+        - Name: FetchSource
+          Actions:
+            - Name: Source-GitHub
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Provider: GitHub
+                Version: "1"
+              OutputArtifacts:
+                - Name: !Sub "${pGitHubRepoName}-${pGitHubBranch}-source-artifacts"
+              Configuration:
+                Owner: !Ref pGitHubRepoOwner
+                Repo: !Ref pGitHubRepoName
+                Branch: !Ref pGitHubBranch
+                OAuthToken: !Sub '{{resolve:secretsmanager:${pGitHubOAuthTokenSecret}:SecretString:GITHUB_ACCESS_TOKEN}}'
+              RunOrder: 1
+        - Name: Test
+          Actions:
+            - Name: CodeBuild
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: "1"
+                Provider: CodeBuild
+              InputArtifacts:
+                - Name: !Sub "${pGitHubRepoName}-${pGitHubBranch}-source-artifacts"
+              OutputArtifacts:
+                - Name: !Sub "${pGitHubRepoName}-${pGitHubBranch}-test-output"
+              Configuration:
+                ProjectName: !Sub "${pGitHubRepoName}-${pGitHubBranch}-test"
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: CodeBuild
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: "1"
+                Provider: CodeBuild
+              InputArtifacts:
+                - Name: !Sub "${pGitHubRepoName}-${pGitHubBranch}-source-artifacts"
+              OutputArtifacts:
+                - Name: !Sub "${pGitHubRepoName}-${pGitHubBranch}-build-output"
+              Configuration:
+                ProjectName: !Sub "${pGitHubRepoName}-${pGitHubBranch}-project"
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: DeployAction
+              InputArtifacts:
+              - Name: !Sub "${pGitHubRepoName}-${pGitHubBranch}-build-output"
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: "1"
+                Provider: CodeDeploy
+              Configuration:
+                ApplicationName: !Sub "${pGitHubRepoName}-${pGitHubBranch}"
+                DeploymentGroupName: !Sub "${pGitHubRepoName}-${pGitHubBranch}"
+              RunOrder: 1
 
   rCodeBuildRole:
     Type: AWS::IAM::Role
