@@ -415,39 +415,47 @@ Resources:
                 ApplicationName: !Sub "${pGitHubRepoName}-${pGitHubBranch}"
                 DeploymentGroupName: !Sub "${pGitHubRepoName}-${pGitHubBranch}"
               RunOrder: 1
-
+  
+  # code build
   rCodeBuildRole:
-    Type: AWS::IAM::Role
+    Type: "AWS::IAM::Role"
     Properties:
+      Path: "/"
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
-          - Effect: Allow
-            Action:
-              - sts:AssumeRole
+          -
+            Effect: Allow
             Principal:
               Service:
-                - codebuild.amazonaws.com
+                - "codebuild.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
       Policies:
-        - PolicyName: CodeBuildServiceRolePolicy
+        - PolicyName: CodeBuildPolicy
           PolicyDocument:
-            Version: '2012-10-17'
+            Version: "2012-10-17"
             Statement:
-              - Sid: CloudWatchWriteLogs
-                Effect: Allow
+              - Effect: Allow
                 Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                  - logs:PutSubscriptionFilter
-                Resource: '*'
-              - Sid: S3ListBucket
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource:
+                  - "arn:aws:logs:*:*:log-group:/aws/codebuild/*"
+              - Effect: Allow
+                Action:
+                  - "s3:GetObject"
+                  - "s3:GetObjectVersion"
+                  - "s3:PutObject"
+                Resource: "arn:aws:s3:::codepipeline-*/*"
+              - Sid: S3ListBuildArtifactBucket
                 Effect: Allow
                 Action:
                   - s3:ListBucket
                 Resource:
-                  - '*'
-              - Sid: S3ListGetPutObjects
+                  - !Sub 'arn:aws:s3:::${pGitHubRepoName}-${pGitHubBranch}-pipeline'
+              - Sid: S3ListGetPutObjectsBuildArtifactBucket
                 Effect: Allow
                 Action:
                   - s3:ListObjects
@@ -457,7 +465,99 @@ Resources:
                   - s3:PutObject
                   - s3:PutObjectAcl
                 Resource:
-                  - '*'
+                  - !Sub 'arn:aws:s3:::${pGitHubRepoName}-${pGitHubBranch}-pipeline/*'
+                  
+  
+  rTestCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${pGitHubRepoName}-${pGitHubBranch}-test"
+      Description: CodeBuild project for running Node tests
+      ServiceRole: !GetAtt rCodeBuildRole.Arn
+      Artifacts:
+        Name: !Sub "${pGitHubRepoName}-${pGitHubBranch}-test"
+        Type: CODEPIPELINE
+        Packaging: NONE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.1
+          phases:
+            install:
+              commands:
+                - npm install
+                - npm install -g mocha
+            pre_build:
+              commands:
+                - npm run lint
+            build:
+              commands:
+                - npm test
+      TimeoutInMinutes: 10
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/nodejs:6.3.1
+  
+  rCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${pGitHubRepoName}-${pGitHubBranch}"
+      ServiceRole: !GetAtt rCodeBuildRole.Arn
+      Artifacts:
+        Name: !Sub "${pGitHubRepoName}-${pGitHubBranch}"
+        Type: CODEPIPELINE
+        Packaging: NONE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/nodejs:7.0.0
+      Source:
+        Type: CODEPIPELINE
+      TimeoutInMinutes: 10
+
+  # rCodeBuildRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     AssumeRolePolicyDocument:
+  #       Version: '2012-10-17'
+  #       Statement:
+  #         - Effect: Allow
+  #           Action:
+  #             - sts:AssumeRole
+  #           Principal:
+  #             Service:
+  #               - codebuild.amazonaws.com
+  #     Policies:
+  #       - PolicyName: CodeBuildServiceRolePolicy
+  #         PolicyDocument:
+  #           Version: '2012-10-17'
+  #           Statement:
+  #             - Sid: CloudWatchWriteLogs
+  #               Effect: Allow
+  #               Action:
+  #                 - logs:CreateLogGroup
+  #                 - logs:CreateLogStream
+  #                 - logs:PutLogEvents
+  #                 - logs:PutSubscriptionFilter
+  #               Resource: '*'
+  #             - Sid: S3ListBucket
+  #               Effect: Allow
+  #               Action:
+  #                 - s3:ListBucket
+  #               Resource:
+  #                 - '*'
+  #             - Sid: S3ListGetPutObjects
+  #               Effect: Allow
+  #               Action:
+  #                 - s3:ListObjects
+  #                 - s3:GetObject
+  #                 - s3:GetObjectVersion
+  #                 - s3:GetBucketVersioning
+  #                 - s3:PutObject
+  #                 - s3:PutObjectAcl
+  #               Resource:
+  #                 - '*'
 
   rGitHubAuthTokenSecret:
     Type: AWS::CodeBuild::SourceCredential
@@ -466,33 +566,33 @@ Resources:
       ServerType: GITHUB
       Token: !Sub '{{resolve:secretsmanager:${pGitHubOAuthTokenSecretArn}:SecretString:GITHUB_ACCESS_TOKEN}}'
     
-  rCfnDeploymentProject:
-    Type: AWS::CodeBuild::Project
-    Properties:
-      Name: wilpro-cfn-project
-      ServiceRole: !GetAtt rCodeBuildRole.Arn
-      Source:
-        Type: GITHUB
-        Location: !Ref pGitHubUrl
-        BuildSpec: buildspec-cfn.yml
-        Auth:
-          Type: OAUTH
-          Resource: !Ref rGitHubAuthTokenSecret
-      Artifacts:
-        Type: NO_ARTIFACTS
-      Environment:
-        ComputeType: BUILD_GENERAL1_SMALL
-        Image: !Ref pCfnBuildImage
-        Type: LINUX_CONTAINER
-      Triggers: 
-        Webhook: true
-        FilterGroups:
-          - - Type: EVENT
-              Pattern: PULL_REQUEST_CREATED,PULL_REQUEST_UPDATED
-            - Type: BASE_REF
-              Pattern: !Sub ^refs/heads/master$
-              ExcludeMatchedPattern: false
-      TimeoutInMinutes: 5
+  # rCfnDeploymentProject:
+  #   Type: AWS::CodeBuild::Project
+  #   Properties:
+  #     Name: wilpro-cfn-project
+  #     ServiceRole: !GetAtt rCodeBuildRole.Arn
+  #     Source:
+  #       Type: GITHUB
+  #       Location: !Ref pGitHubUrl
+  #       BuildSpec: buildspec-cfn.yml
+  #       Auth:
+  #         Type: OAUTH
+  #         Resource: !Ref rGitHubAuthTokenSecret
+  #     Artifacts:
+  #       Type: NO_ARTIFACTS
+  #     Environment:
+  #       ComputeType: BUILD_GENERAL1_SMALL
+  #       Image: !Ref pCfnBuildImage
+  #       Type: LINUX_CONTAINER
+  #     Triggers: 
+  #       Webhook: true
+  #       FilterGroups:
+  #         - - Type: EVENT
+  #             Pattern: PULL_REQUEST_CREATED,PULL_REQUEST_UPDATED
+  #           - Type: BASE_REF
+  #             Pattern: !Sub ^refs/heads/master$
+  #             ExcludeMatchedPattern: false
+  #     TimeoutInMinutes: 5
 
 Outputs:
     rALBDNS:
