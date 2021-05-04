@@ -464,8 +464,7 @@ Resources:
                   - s3:PutObject
                   - s3:PutObjectAcl
                 Resource:
-                  - !Sub 'arn:aws:s3:::${pGitHubRepoName}-${pGitHubBranch}-pipeline/*'
-                  
+                  - !Sub 'arn:aws:s3:::${pGitHubRepoName}-${pGitHubBranch}-pipeline/*'                  
   
   rTestCodeBuildProject:
     Type: AWS::CodeBuild::Project
@@ -511,6 +510,46 @@ Resources:
       Source:
         Type: CODEPIPELINE
       TimeoutInMinutes: 10
+  
+  # code deploy
+  rDeployApplication:
+    Type: "AWS::CodeDeploy::Application"
+    Properties:
+      ApplicationName: !Sub "${pGitHubRepoName}-application"
+
+  rDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref rDeployApplication
+      DeploymentConfigName: CodeDeployDefault.AllAtOnce
+      DeploymentGroupName: !Sub "${pGitHubRepoName}-application"
+      ServiceRoleArn: !GetAtt rCodeDeployRole.Arn
+
+  rCodeDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Sid: "1"
+            Effect: Allow
+            Principal:
+              Service:
+                - !Sub "codedeploy.${pTargetRegion}.amazonaws.com"
+            Action: sts:AssumeRole
+      Path: "/"
+  
+  rCodeDeployRolePolicies:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: CodeDeployPolicy
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Resource: "*"
+            Action:
+              - ec2:Describe*
+      Roles:
+        - !Ref rCodeDeployRole
 
   # rCodeBuildRole:
   #   Type: AWS::IAM::Role
