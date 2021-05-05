@@ -361,6 +361,21 @@ Resources:
                 DeploymentGroupName: !Sub "${pGitHubRepoName}-application"
               RunOrder: 1
   
+  rCodePipelineWebhook:
+    Type: 'AWS::CodePipeline::Webhook'
+    Properties:
+      AuthenticationConfiguration:
+        SecretToken: !Sub '{{resolve:secretsmanager:${pGitHubOAuthTokenSecret}:SecretString:GITHUB_ACCESS_TOKEN}}'
+      Filters:
+      - JsonPath: '$.ref'
+        MatchEquals: !Sub 'refs/heads/${pGitHubBranch}'
+      Authentication: GITHUB_HMAC
+      TargetPipeline: !Ref rCodePipeline
+      TargetAction: Source-GitHub
+      Name: !Sub '${pGitHubRepoName}-GitHub-Webhook'
+      TargetPipelineVersion: !GetAtt rCodePipeline.Version
+      RegisterWithThirdParty: true
+  
   # code build
   rCodeBuildRole:
     Type: "AWS::IAM::Role"
