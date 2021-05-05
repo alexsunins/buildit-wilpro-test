@@ -17,29 +17,16 @@ Parameters:
     Type: String
     Description: Name of branch to use inside the GitHub Repository
     Default: master
-
-  pGitHubUrl:
-    Type: String
-    Default: https://github.com/alexsunins/devops-test.git
-    Description: The GitHub repository linked to a webhook
   
-  pGitHubOAuthTokenSecretArn:
+  pGitHubOAuthTokenSecret:
     Description: The name of a Secret that is holding GitHub OAuth token
     Type: String
     Default: '/wilpro/GithubTokenSecretArn'
-  
-  pCfnBuildImage:
+
+  pTargetRegion:
+    Description: Target region for Code Deploy
     Type: String
-    Default: aws/codebuild/standard:2.0
-    Description: The CloudFormation build environment image.
-    AllowedValues:
-      - aws/codebuild/standard:2.0
-      - aws/codebuild/standard:2.0-1.12.0
-      - aws/codebuild/standard:2.0-1.11.0
-      - aws/codebuild/standard:2.0-1.10.0
-      - aws/codebuild/standard:2.0-1.9.0
-      - aws/codebuild/standard:1.0
-      - aws/codebuild/windows-base:1.0
+    Default: eu-west-2
 
 Resources:
   # network components
@@ -112,8 +99,7 @@ Resources:
       SubnetId: !Ref rPublicSubnetB
       RouteTableId: !Ref rPublicRouteTableB
   
-  # load balancer
-  
+  # load balancer  
   rELBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -179,6 +165,9 @@ Resources:
       Targets:
       - Id:
           Ref: rAppServerOne
+        Port: 80
+      - Id:
+          Ref: rAppServerTwo
         Port: 80
       UnhealthyThresholdCount: 3
       VpcId:
@@ -555,6 +544,8 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Open ports 22 and 80
+      VpcId:
+        Ref: rVPC
       SecurityGroupIngress:
       - IpProtocol: tcp
         FromPort: 22
@@ -571,14 +562,10 @@ Resources:
       LaunchTemplateName: !Sub "${pGitHubRepoName}-LaunchTemplate"
       LaunchTemplateData:
         IamInstanceProfile:
-          Arn: !GetAtt
-            - rEC2InstanceProfile
-            - Arn
+          Arn: !GetAtt rEC2InstanceProfile.Arn
         ImageId: ami-1ec8d37a
         InstanceType: t2.nano
         # KeyName: MyKeyPair
-        SecurityGroupIds:
-          - !GetAtt rInstanceSecurityGroup.GroupId
         TagSpecifications:
           - ResourceType: instance
             Tags: 
@@ -605,6 +592,12 @@ Resources:
       LaunchTemplate:
         LaunchTemplateId: !Ref rEC2LaunchTemplate
         Version: "1"
+      NetworkInterfaces:
+        - DeleteOnTermination: true
+          DeviceIndex: '0'
+          GroupSet:
+            - !GetAtt rInstanceSecurityGroup.GroupId
+          SubnetId: !Ref rPublicSubnetA
   
   rAppServerTwo:
     DependsOn: rAppServerOne
@@ -613,28 +606,33 @@ Resources:
       LaunchTemplate:
         LaunchTemplateId: !Ref rEC2LaunchTemplate
         Version: "1"
+      NetworkInterfaces:
+        - DeleteOnTermination: true
+          DeviceIndex: '0'
+          GroupSet:
+            - !GetAtt rInstanceSecurityGroup.GroupId
+          SubnetId: !Ref rPublicSubnetB
 
   rGitHubAuthTokenSecret:
     Type: AWS::CodeBuild::SourceCredential
     Properties:
       AuthType: PERSONAL_ACCESS_TOKEN
       ServerType: GITHUB
-      Token: !Sub '{{resolve:secretsmanager:${pGitHubOAuthTokenSecretArn}:SecretString:GITHUB_ACCESS_TOKEN}}'
+      Token: !Sub '{{resolve:secretsmanager:${pGitHubOAuthTokenSecret}:SecretString:GITHUB_ACCESS_TOKEN}}'
 
 Outputs:
-    rALBDNS:
-        Description: "Application Load Balancer Hostname"
-        Value:
-          !GetAtt rApplicationLoadBalancer.DNSName
-    AppServerOne:
-        Description: "App Server One"
-        Value:
-          Ref: rAppServerOne
-    AppServerTwo:
-        Description: "App Server Two"
-        Value:
-          Ref: rAppServerTwo
-    ApplicationLoadBalancer:
-        Description: "Application Load Balancer"
-        Value:
-          Ref: rApplicationLoadBalancer
+  rALBDNS:
+    Description: "Application Load Balancer Hostname"
+    Value: !GetAtt rApplicationLoadBalancer.DNSName
+
+  AppServerOne:
+    Description: "App Server One"
+    Value: !Ref rAppServerOne
+
+  AppServerTwo:
+    Description: "App Server Two"
+    Value: !Ref rAppServerTwo
+
+  CodePipeline:
+    Description: "CodePipeline Access"
+    Value: !Ref rCodePipeline
