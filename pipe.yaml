@@ -2,15 +2,42 @@ AWSTemplateFormatVersion: '2010-09-09'
 
 Description: AWS CodePipeline for buildIT Wilpro exercise. Deploys a CodePipeline and CloudFormation Stacks.
 
+Metadata:
+  AWS::CloudFormation::Interface: # console view
+    ParameterGroups:
+      - Label:
+          default: GitHub Configuration
+        Parameters:
+          - pGitHubRepoName
+          - pGitHubRepoOwner
+          - pGitHubBranch
+          - pGitHubOAuthTokenSecret
+      - Label:
+          default: Other
+        Parameters:
+          - pTargetRegion
+
+    ParameterLabels:
+      pGitHubRepoName:
+        default: The name of the source code repository
+      pGitHubRepoOwner:
+        default: The owner of the source code repository
+      pGitHubBranch:
+        default: The branch of the source code repository where to build from (e.g. master)
+      pGitHubOAuthTokenSecret:
+        default: The name of a Secret that is holding GitHub OAuth token
+      pTargetRegion:
+        default: Region where to deploy to
+
 Parameters:
   pGitHubRepoOwner:
     Type: String
-    Description: Owner of the GitHub Repository
+    Description: The owner of the source code repository
     Default: alexsunins
 
   pGitHubRepoName:
     Type: String
-    Description: Name of the GitHub Repository
+    Description: The name of the source code repository
     Default: devops-test
 
   pGitHubBranch:
@@ -563,9 +590,9 @@ Resources:
       LaunchTemplateData:
         IamInstanceProfile:
           Arn: !GetAtt rEC2InstanceProfile.Arn
-        ImageId: ami-1ec8d37a
+        ImageId: ami-1ec8d37a # ImageId is likely to change so best if references as a parameter
         InstanceType: t2.nano
-        # KeyName: MyKeyPair
+        # KeyName: MyKeyPair  # excluded as no access to the instance is required
         TagSpecifications:
           - ResourceType: instance
             Tags: 
